@@ -1,0 +1,4 @@
+redis:
+  database: 0
+  host: demo.redis.cn
+  port: 16379
