@@ -1,13 +1,14 @@
 package com.beardlesscat.lock;
 
 import com.beardlesscat.client.ClientConfig;
+import lombok.extern.slf4j.Slf4j;
 import redis.clients.jedis.Jedis;
-
+@Slf4j
 public abstract class AbstractLock implements Lock{
     /**
-     * 锁默认存活时间
+     * 锁默认存活时间（秒）
      */
-    protected static final long TIME = 3*1000;
+    protected static final long TIME = 3;
     /**
      * 锁的value值
      */
@@ -26,5 +27,11 @@ public abstract class AbstractLock implements Lock{
 
     public AbstractLock(ClientConfig config) {
         jedis = new Jedis(config.getHost(),config.getPort());
+    }
+
+    @Override
+    public void unlock(String name) {
+        jedis.del(name);
+        log.info("unlock success !");
     }
 }
