@@ -5,9 +5,11 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -17,7 +19,7 @@ public class RedisLock extends AbstractLock{
             "redis.call('expire',KEYS[1],ARGV[2]) return 1 else return 0 end";
     private static final String PREFIX = "expire_lock_thread-" ;
     private final AtomicLong THREAD_ID_INDEX = new AtomicLong(0);
-
+    private AtomicBoolean isExpireThreadRunning = new AtomicBoolean(false);
     public RedisLock(ClientConfig config) {
         super(config);
     }
@@ -41,16 +43,22 @@ public class RedisLock extends AbstractLock{
     @Override
     public void lock(String name, long expire, long timeOut) {
         long startMillis = System.currentTimeMillis();
+        String threadId = this.getThreadId();
+        name = threadId+":"+name;
         do {
             if(this.redisLock(name,expire) == 1L){
                 log.info("线程{} lock success !",Thread.currentThread().getName());
                 //增加锁续签
-                this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
-                    @Override
-                    public void run() {
-                        scheduleExpiration(name,expire);
-                    }
-                }, expire/3, expire/3, TimeUnit.SECONDS);
+                String finalName = name;
+                if(!isExpireThreadRunning.get()){
+                    isExpireThreadRunning.compareAndSet(false,true);
+                    this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
+                        @Override
+                        public void run() {
+                            scheduleExpiration(finalName,expire);
+                        }
+                    }, expire/3, expire/3, TimeUnit.SECONDS);
+                }
                 return;
             }else {
                 try {
@@ -65,6 +73,14 @@ public class RedisLock extends AbstractLock{
     }
 
     /**
+     * 获取线程唯一id（uuid+threadId）
+     * @return
+     */
+    private String getThreadId() {
+        return UUID.randomUUID().toString().replace("-","")+Thread.currentThread().getId();
+    }
+
+    /**
      * 锁续签
      * @param name
      */
@@ -75,6 +91,7 @@ public class RedisLock extends AbstractLock{
             log.info("线程{}续签锁（{}）成功",Thread.currentThread().getName());
         }else {
             scheduledExecutorService.shutdownNow();
+            isExpireThreadRunning.compareAndSet(false,true);
             log.info("线程池停止");
         }
     }

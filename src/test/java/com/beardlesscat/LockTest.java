@@ -15,6 +15,7 @@ public class LockTest {
         Lock lock = new RedisLock(config);
         try {
             lock.lock("lock");
+            lock.lock("lock");
             TimeUnit.SECONDS.sleep(20);
         } finally {
             lock.unlock("lock");
