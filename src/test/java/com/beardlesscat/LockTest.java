@@ -16,18 +16,13 @@ public class LockTest {
         try {
             lock.lock("lock");
             lock.lock("lock");
-            TimeUnit.SECONDS.sleep(20);
-        } finally {
+            TimeUnit.SECONDS.sleep(5);
             lock.unlock("lock");
+            TimeUnit.SECONDS.sleep(5);
+            lock.unlock("lock");
+        } finally {
             log.info("线程解锁成功");
         }
-        new Thread(()->{
-            try {
-                TimeUnit.SECONDS.sleep(30);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        },"test-thread").start();
         TimeUnit.SECONDS.sleep(2*60);
         log.info("JVM即将退出");
     }
