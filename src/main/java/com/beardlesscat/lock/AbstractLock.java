@@ -24,8 +24,7 @@ public abstract class AbstractLock implements Lock{
      */
     protected static final long WAIT_TIME_OUT = Long.MAX_VALUE;
 
-    protected ThreadLocal<String>  uid = new ThreadLocal();
-
+    protected static String uid ;
     protected Jedis jedis ;
 
     public AbstractLock() {
@@ -33,7 +32,7 @@ public abstract class AbstractLock implements Lock{
         jedisPoolConfig.setMaxTotal(1024);
         jedisPoolConfig.setMaxIdle(100);
         jedisPoolConfig.setTestOnReturn(true);
-        uid.set(UUID.randomUUID().toString().replace("-",""));
+        uid = UUID.randomUUID().toString().replace("-","");
         JedisPoolManager instance = JedisPoolManager.getInstance();
         Jedis resource = instance.getJedisPool().getResource();
         this.jedis = resource;

@@ -110,7 +110,8 @@ public class RedisLock extends AbstractLock{
      * @return
      */
     private String getThreadId() {
-        String threadId = uid.get() + ":" + Thread.currentThread().getId();
+        String threadId = uid + ":" + Thread.currentThread().getId();
+
         log.info("{}:threadId:{}",Thread.currentThread().getName(),threadId);
         return threadId;
     }
