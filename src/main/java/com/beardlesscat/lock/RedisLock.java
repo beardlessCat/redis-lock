@@ -1,6 +1,5 @@
 package com.beardlesscat.lock;
 
-import com.beardlesscat.client.ClientConfig;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -9,6 +8,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
@@ -22,7 +22,7 @@ public class RedisLock extends AbstractLock{
             "if (redis.call('hexists', KEYS[1], ARGV[2]) == 1) then         \n" +
             "    redis.call('hincrby', KEYS[1], ARGV[2], 1);                \n" +
             "    redis.call('expire', KEYS[1], ARGV[1]);                    \n" +
-            "    return 1;                                                  \n" +
+            "    return 2;                                                  \n" +
             "end;                                                           \n" +
             "return 0;                                                        ";
 
@@ -42,11 +42,15 @@ public class RedisLock extends AbstractLock{
             "end;                                                           \n" +
             "return nil;                                                    \n";
 
+    ThreadLocal<Long> time = new ThreadLocal<>();
     private static final String PREFIX = "expire_lock_thread-" ;
     private final AtomicLong THREAD_ID_INDEX = new AtomicLong(0);
-    private AtomicBoolean isExpireThreadRunning = new AtomicBoolean(false);
-    public RedisLock(ClientConfig config) {
-        super(config);
+
+    private volatile AtomicBoolean isExpireThreadRunning = new AtomicBoolean(false);
+    private AtomicInteger reinCount = new AtomicInteger(0);
+
+    public RedisLock() {
+        super();
     }
 
     //定时任务
@@ -68,10 +72,11 @@ public class RedisLock extends AbstractLock{
 
     @Override
     public void lock(String name, long expire, long timeOut) {
-        long startMillis = System.currentTimeMillis();
+        time.set(System.currentTimeMillis());
         String value = this.getThreadId();
         do {
-            if(this.redisLock(name,value,expire) == 1L){
+            long state = this.redisLock(name, value, expire);
+            if( state== 1L){
                 log.info("线程{} lock success !",Thread.currentThread().getName());
                 //增加锁续签
                 if(!isExpireThreadRunning.get()){
@@ -84,6 +89,9 @@ public class RedisLock extends AbstractLock{
                     }, expire/3, expire/3, TimeUnit.SECONDS);
                 }
                 return;
+            }else if(state== 2L){
+                log.info("线程{} lock success,重入次数：{} !",Thread.currentThread().getName(),reinCount.incrementAndGet());
+                return;
             }else {
                 try {
                     TimeUnit.MILLISECONDS.sleep(BLOCK_WAIT_TIME);
@@ -92,7 +100,7 @@ public class RedisLock extends AbstractLock{
                 }
                 continue;
             }
-        }while (System.currentTimeMillis()-startMillis<timeOut);
+        }while ((System.currentTimeMillis()-time.get())<timeOut);
         log.warn("线程{}加锁超时失败。",Thread.currentThread().getName());
         throw new RuntimeException("锁获取超时！");
     }
@@ -102,7 +110,9 @@ public class RedisLock extends AbstractLock{
      * @return
      */
     private String getThreadId() {
-        return uid + Thread.currentThread().getId();
+        String threadId = uid.get() + ":" + Thread.currentThread().getId();
+        log.info("{}:threadId:{}",Thread.currentThread().getName(),threadId);
+        return threadId;
     }
 
     /**
@@ -113,7 +123,7 @@ public class RedisLock extends AbstractLock{
         Long ttl = jedis.ttl(name);
         if(ttl>0){
             jedis.expire(name,expire) ;
-            log.info("线程{}续签锁（{}）成功",Thread.currentThread().getName());
+            log.info("续签锁成功",Thread.currentThread().getName());
         }else {
             scheduledExecutorService.shutdownNow();
             isExpireThreadRunning.compareAndSet(false,true);
@@ -134,6 +144,9 @@ public class RedisLock extends AbstractLock{
         values.add(String.valueOf(expire));
         values.add(value);
         long eval = (long) jedis.eval(LUA_LOCK_SCRIPT, keys, values);
+        if(eval==1L){
+            log.warn("线程{}已经加锁{}:{}",Thread.currentThread().getName(),name,value);
+        }
         return  eval;
     }
 
@@ -146,11 +159,16 @@ public class RedisLock extends AbstractLock{
         List<String> keys = new ArrayList<>();
         List<String> values = new ArrayList<>();
         keys.add(name);
-        values.add(this.getThreadId());
+        String threadId = this.getThreadId();
+        values.add(threadId);
+        log.warn("{}:准备释放锁{}:{}",Thread.currentThread().getName(),name,threadId);
         long eval = (long) jedis.eval(LUA_UNLOCK_SCRIPT, keys, values);
-        log.info("释放锁返回结果：{}",eval);
+        log.info("线程{}释放锁返回结果：{}",Thread.currentThread().getName(),eval);
         if(eval==0){
             scheduledExecutorService.shutdownNow();
+            log.info("线程池停止（锁彻底释放）");
+        }else if(eval == 1||eval == 2 ) {
+            log.warn("锁释放出现问题{}:{}",name,threadId);
         }
     }
 }
